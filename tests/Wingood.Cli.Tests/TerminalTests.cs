@@ -13,7 +13,7 @@ public sealed class TerminalTests
         foreach (var width in new[] { 50, 80, 140 })
         {
             var output = new StringWriter();
-            var console = AnsiConsole.Create(new AnsiConsoleSettings { Ansi = AnsiSupport.No, Out = new AnsiConsoleOutput(output), Interactive = InteractionSupport.No });
+            var console = AnsiConsole.Create(new AnsiConsoleSettings { Ansi = AnsiSupport.No, ColorSystem = ColorSystemSupport.NoColors, Out = new AnsiConsoleOutput(output), Interactive = InteractionSupport.No, Enrichment = new ProfileEnrichment { UseDefaultEnrichers = false } });
             console.Profile.Width = width;
             new Terminal(console, plain: false).Packages([new("a", "Example.App", "Example [red]app[/]", "1.0", "2.0", "user", "portable")]);
             var rendered = output.ToString();
@@ -29,7 +29,7 @@ public sealed class TerminalTests
     public void PlainDetailsKeepCompleteUrlsUnknownFieldsAndEscapeControlCodes()
     {
         var output = new StringWriter();
-        var console = AnsiConsole.Create(new AnsiConsoleSettings { Ansi = AnsiSupport.No, Out = new AnsiConsoleOutput(output), Interactive = InteractionSupport.No });
+        var console = AnsiConsole.Create(new AnsiConsoleSettings { Ansi = AnsiSupport.No, ColorSystem = ColorSystemSupport.NoColors, Out = new AnsiConsoleOutput(output), Interactive = InteractionSupport.No, Enrichment = new ProfileEnrichment { UseDefaultEnrichers = false } });
         console.Profile.Width = 10000;
         var url = "https://example.com/" + new string('a', 120);
         new Terminal(console).Details(new("Literal [App]", "Example.App",
@@ -39,5 +39,11 @@ public sealed class TerminalTests
         StringAssert.Contains(rendered, url);
         StringAssert.Contains(rendered, "custom value");
         Assert.IsFalse(rendered.Contains('\x1b'));
+    }
+
+    [TestMethod]
+    public void ExplicitNoColorCannotBeOverriddenByCiEnvironment()
+    {
+        Assert.IsFalse(new Terminal("never").Console.Profile.Capabilities.Ansi);
     }
 }

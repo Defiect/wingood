@@ -25,7 +25,7 @@ public sealed class WorkflowTests
         packages ??= [App];
         entries ??= packages.Select(package => new NativeUpgrade(package.Name, package.Id, package.InstalledVersion, package.AvailableVersion, package.Source)).ToArray();
         var output = new StringWriter();
-        var console = AnsiConsole.Create(new AnsiConsoleSettings { Ansi = AnsiSupport.No, Interactive = InteractionSupport.No, Out = new AnsiConsoleOutput(output) });
+        var console = AnsiConsole.Create(new AnsiConsoleSettings { Ansi = AnsiSupport.No, ColorSystem = ColorSystemSupport.NoColors, Interactive = InteractionSupport.No, Out = new AnsiConsoleOutput(output), Enrichment = new ProfileEnrichment { UseDefaultEnrichers = false } });
         console.Profile.Width = 10000;
         var catalog = new FakeCatalog(packages, entries, warnings ?? [], unavailable);
         return (new UpdateService(new Terminal(console), catalog, new RunHistory(root)), catalog, output);

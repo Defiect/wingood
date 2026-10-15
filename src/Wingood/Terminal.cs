@@ -22,6 +22,9 @@ internal sealed partial class Terminal
             Ansi = enabled ? AnsiSupport.Yes : AnsiSupport.No,
             ColorSystem = enabled ? ColorSystemSupport.TrueColor : ColorSystemSupport.NoColors,
             Interactive = !System.Console.IsOutputRedirected ? InteractionSupport.Detect : InteractionSupport.No,
+            // CI profile enrichers can otherwise re-enable ANSI even when the
+            // caller explicitly requested plain output.
+            Enrichment = new ProfileEnrichment { UseDefaultEnrichers = enabled && color == "auto" },
         });
         if (Plain) Console.Profile.Width = 10000;
     }
