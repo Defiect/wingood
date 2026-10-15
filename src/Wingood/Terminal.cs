@@ -157,6 +157,7 @@ internal sealed partial class Terminal
             recorder.Progress(package, progress);
             lock (gate)
             {
+                if (states[package.Key] is "Done" or "Failed" or "Cancelled") return;
                 if (progress.DownloadProgress >= 1 || progress.BytesRequired > 0 && progress.BytesDownloaded >= progress.BytesRequired)
                     ready.Add(package.Key);
                 var state = progress.State switch

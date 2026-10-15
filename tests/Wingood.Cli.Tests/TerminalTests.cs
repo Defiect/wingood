@@ -46,4 +46,42 @@ public sealed class TerminalTests
     {
         Assert.IsFalse(new Terminal("never").Console.Profile.Capabilities.Ansi);
     }
+
+    [TestMethod]
+    public async Task LateNativeProgressCannotRevertACompletedApp()
+    {
+        var output = new StringWriter();
+        var console = AnsiConsole.Create(new AnsiConsoleSettings
+        {
+            Ansi = AnsiSupport.No,
+            ColorSystem = ColorSystemSupport.NoColors,
+            Interactive = InteractionSupport.No,
+            Out = new AnsiConsoleOutput(output),
+            Enrichment = new ProfileEnrichment { UseDefaultEnrichers = false }
+        });
+        var backend = new LateProgressBackend();
+        var directory = Path.Combine(Path.GetTempPath(), $"wingood-terminal-test-{Guid.NewGuid():N}");
+        try
+        {
+            using var recorder = new RunRecorder(directory);
+            await new Terminal(console).RunAsync(backend, [new("a", "Example.App", "Example", "1", "2", "user", "portable")], 1, recorder, CancellationToken.None);
+            var completed = output.ToString();
+            backend.Progress!.Report(new("Downloading", DownloadProgress: .5));
+            Assert.AreEqual(completed, output.ToString());
+        }
+        finally
+        {
+            if (Path.GetFullPath(directory).StartsWith(Path.GetTempPath(), StringComparison.OrdinalIgnoreCase)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private sealed class LateProgressBackend : IUpgradeBackend
+    {
+        public IProgress<UpgradeProgress>? Progress { get; private set; }
+        public Task<UpgradeResult> UpgradeAsync(PackageCandidate package, IProgress<UpgradeProgress> progress, CancellationToken cancellationToken)
+        {
+            Progress = progress;
+            return Task.FromResult(new UpgradeResult("Ok"));
+        }
+    }
 }
