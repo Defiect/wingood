@@ -1,0 +1,3 @@
+# Install prebuilt releases into the user's folder
+
+Wingood is distributed through prebuilt GitHub releases produced by a Windows GitHub Actions runner. A single-command PowerShell installer downloads the release, installs it into a user-owned folder, and adds the commands to PATH, so using the tool does not require Git or compilation. This establishes a release-based installation contract instead of asking users to build the repository. The self-contained ZIP layout bundles the runtime at the cost of a larger download. Sean approved this decision with the complete plan on October 14, 2026. Implementation has not begun.

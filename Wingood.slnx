@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Wingood.Core/Wingood.Core.csproj" />
+    <Project Path="src/Wingood/Wingood.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Wingood.Tests/Wingood.Tests.csproj" />
+  </Folder>
+</Solution>
