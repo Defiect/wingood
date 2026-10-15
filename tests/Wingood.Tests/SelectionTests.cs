@@ -6,61 +6,85 @@ namespace Wingood.Tests;
 [TestClass]
 public sealed class SelectionTests
 {
-    private static readonly PackageCandidate UserCopy = new("a", "Vendor.App", "App", "1", "2", "user", "inno");
+    private static readonly PackageCandidate UserCopy = new("a", "Vendor.App", "Vendor App", "1", "2", "user", "inno");
 
     [TestMethod]
-    public void SelectionIsExactCaseInsensitiveAndDeduplicated()
+    public void ExactIdThenExactNameThenUniqueSubstringMatchingPreservesOrderAndDeduplicatesByKey()
     {
-        var selected = PackageSelection.Select([UserCopy], ["vendor.app", "Vendor.App"]);
-        Assert.HasCount(1, selected);
-        Assert.Throws<ArgumentException>(() => PackageSelection.Select([UserCopy], ["Vendor"]));
+        var editor = new PackageCandidate("b", "Tools.Editor", "Text Editor", "1", "2", "user", "portable");
+        var selected = PackageSelection.Select([UserCopy, editor], ["App", "text editor", "Tools.Editor", "vendor.app"]);
+
+        CollectionAssert.AreEqual(new[] { "a", "b" }, selected.Select(package => package.Key).ToArray());
     }
 
     [TestMethod]
-    public void MissingMemberRejectsTheWholeBatch()
+    public void ExactIdTakesPrecedenceOverNameAndAmbiguousSubstringsListCandidates()
     {
-        Assert.Throws<ArgumentException>(() => PackageSelection.Select([UserCopy], ["Vendor.App", "Missing.App"]));
+        var exactId = new PackageCandidate("a", "Vendor", "Other App", "1", "2", "user", "inno");
+        var matchingName = new PackageCandidate("b", "Other.Id", "Vendor", "1", "2", "user", "inno");
+        Assert.AreEqual("a", PackageSelection.Select([exactId, matchingName], ["Vendor"])[0].Key);
+
+        var anotherApp = new PackageCandidate("c", "Vendor.App2", "Another App", "1", "2", "user", "inno");
+        var error = Assert.Throws<ArgumentException>(() => PackageSelection.Select([UserCopy, anotherApp], ["Vendor"]));
+        StringAssert.Contains(error.Message, "Vendor");
+        StringAssert.Contains(error.Message, "Vendor App");
+        StringAssert.Contains(error.Message, "Another App");
     }
 
     [TestMethod]
-    public void DuplicateInstalledCopiesNeedUnambiguousScope()
+    public void MissingEmptyAndOutOfScopeSelectionsFailClosed()
+    {
+        Assert.Throws<ArgumentException>(() => PackageSelection.Select([UserCopy], []));
+        Assert.Throws<ArgumentException>(() => PackageSelection.Select([UserCopy], [" "]));
+        Assert.Throws<ArgumentException>(() => PackageSelection.Select([UserCopy], ["Missing App"]));
+        Assert.Throws<ArgumentException>(() => PackageSelection.Select([UserCopy], ["Vendor.App"], "machine"));
+    }
+
+    [TestMethod]
+    public void ScopeDisambiguatesInstalledCopies()
     {
         var machine = UserCopy with { Key = "b", InstalledScope = "machine" };
         Assert.Throws<ArgumentException>(() => PackageSelection.Select([UserCopy, machine], ["Vendor.App"]));
         Assert.AreEqual("b", PackageSelection.Select([UserCopy, machine], ["Vendor.App"], "machine")[0].Key);
-        Assert.Throws<ArgumentException>(() => PackageSelection.Select([UserCopy, UserCopy with { Key = "c" }], ["Vendor.App"], "user"));
     }
 
     [TestMethod]
-    public void DefaultCommandIsReadOnlyAndUpgradeNeedsIds()
+    public void ExclusionsResolveAgainstAllCandidatesBeforeFilteringAndCanNameUnselectedApps()
     {
-        Assert.AreEqual("list", CommandLine.Parse([]).Command);
-        Assert.Throws<ArgumentException>(() => CommandLine.Parse(["upgrade"]));
-        Assert.Throws<ArgumentException>(() => CommandLine.Parse(["upgrade", "--all"]));
+        var selected = new[] { UserCopy };
+        var explicitOnly = new PackageCandidate("b", "Vendor.Tool", "Tool", "1", "2", "user", "portable");
+        var remaining = PackageSelection.Exclude(selected, [UserCopy, explicitOnly], ["Tool"]);
+        CollectionAssert.AreEqual(new[] { "a" }, remaining.Select(package => package.Key).ToArray());
+
+        Assert.Throws<ArgumentException>(() =>
+            PackageSelection.Exclude(selected, [UserCopy, explicitOnly], ["Tool", "missing"]));
+        CollectionAssert.AreEqual(new[] { "a" }, selected.Select(package => package.Key).ToArray());
     }
 
     [TestMethod]
-    public void InvalidFlagsAndValuesFailClosed()
+    public void BulkBindingUsesExactIdSourceAndVersionsAndPreservesNativeOrder()
     {
-        foreach (var args in new[]
+        var winget = UserCopy with { Key = "winget", Source = "winget" };
+        var store = UserCopy with { Key = "store", Source = "msstore", AvailableVersion = "3" };
+        var editor = new PackageCandidate("editor", "Tools.Editor", "Text Editor", "4", "5", "user", "portable", "winget");
+        var entries = new[]
         {
-            new[] { "upgrade", "Vendor.App", "--in-flight", "0" },
-            ["upgrade", "Vendor.App", "--in-flight", "17"],
-            ["upgrade", "Vendor.App", "--source"],
-            ["upgrade", "Vendor.App", "--scope", "other"],
-            ["upgrade", "Vendor.App", "--json"],
-            ["upgrade", "Vendor.App", "--force"],
-        }) Assert.Throws<ArgumentException>(() => CommandLine.Parse(args));
+            new NativeUpgrade("Text Editor", editor.Id, "4", "5", "winget"),
+            new NativeUpgrade("Vendor App", store.Id, "1", "3", "msstore"),
+        };
+
+        var bound = PackageSelection.BindBulk([winget, store, editor], entries);
+        CollectionAssert.AreEqual(new[] { "editor", "store" }, bound.Select(package => package.Key).ToArray());
     }
 
     [TestMethod]
-    public void DryRunPreservesExplicitSelectionAndDoesNotAcceptAgreementsByDefault()
+    public void BulkBindingRejectsUnknownDuplicateAndEmptyIds()
     {
-        var options = CommandLine.Parse(["upgrade", "Vendor.App", "--dry-run", "--json", "--in-flight", "3"]);
-        Assert.IsTrue(options.DryRun);
-        Assert.IsTrue(options.Json);
-        Assert.IsFalse(options.AcceptAgreements);
-        Assert.AreEqual(3, options.InFlight);
-        CollectionAssert.AreEqual(new[] { "Vendor.App" }, options.Ids.ToArray());
+        Assert.Throws<InvalidOperationException>(() => PackageSelection.BindBulk([UserCopy],
+            [new NativeUpgrade("Vendor App", "Missing.App", "1", "2", "winget")]));
+        Assert.Throws<InvalidOperationException>(() => PackageSelection.BindBulk([UserCopy, UserCopy with { Key = "copy" }],
+            [new NativeUpgrade("Vendor App", "Vendor.App", "1", "2", "winget")]));
+        Assert.Throws<InvalidOperationException>(() => PackageSelection.BindBulk([UserCopy],
+            [new NativeUpgrade("Vendor App", "", "1", "2", "winget")]));
     }
 }

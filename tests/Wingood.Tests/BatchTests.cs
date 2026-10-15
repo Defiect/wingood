@@ -36,6 +36,26 @@ public sealed class BatchTests
     }
 
     [TestMethod]
+    public async Task MaximumInFlightSubmitsTheWholeBatchBeforeWaitingForCompletion()
+    {
+        var backend = new ControlledBackend();
+        var packages = new[] { Package("A"), Package("B"), Package("C"), Package("D") };
+        var task = new BatchRunner(backend).RunAsync(packages, int.MaxValue,
+            (_, _) => { }, _ => { }, CancellationToken.None);
+
+        foreach (var package in packages)
+            Assert.AreEqual(package.Id, await backend.NextAsync());
+        Assert.AreEqual(packages.Length, backend.StartedCount);
+        Assert.IsFalse(task.IsCompleted);
+
+        foreach (var package in packages)
+            backend.Finish(package.Id, new UpgradeResult("Ok"));
+        var results = await task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.AreEqual(packages.Length, results.Count);
+        Assert.IsTrue(results.All(outcome => outcome.Result.Succeeded));
+    }
+
+    [TestMethod]
     public async Task CancellationStopsNewSubmissionsButDrainsRunningOperations()
     {
         var backend = new ControlledBackend();

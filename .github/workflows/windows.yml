@@ -1,0 +1,89 @@
+name: Windows build and release
+
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - 'v*'
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Restore locked dependencies
+        run: dotnet restore Wingood.slnx --locked-mode
+      - name: Verify formatting
+        run: dotnet format Wingood.slnx --verify-no-changes --no-restore
+      - name: Build Release
+        run: dotnet build Wingood.slnx --configuration Release --no-restore
+      - name: Run tests
+        run: dotnet test Wingood.slnx --configuration Release --no-build --no-restore
+      - name: Publish self-contained win-x64 app
+        shell: pwsh
+        run: |
+          $publish = Join-Path $env:RUNNER_TEMP 'wingood-publish'
+          $release = Join-Path $env:RUNNER_TEMP 'wingood-release'
+          New-Item -ItemType Directory -Path $publish, $release -Force | Out-Null
+          dotnet publish src/Wingood/Wingood.csproj --configuration Release --runtime win-x64 --self-contained true --no-restore -p:PublishTrimmed=false -p:UseAppHost=true --output $publish
+          if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed.' }
+          $apphost = Join-Path $publish 'wingood.exe'
+          if (-not (Test-Path -LiteralPath $apphost -PathType Leaf)) { throw 'Published wingood.exe apphost is missing.' }
+          Copy-Item -LiteralPath $apphost -Destination (Join-Path $publish 'wg.exe')
+          foreach ($name in @('Microsoft.Management.Deployment.dll', 'hostfxr.dll', 'hostpolicy.dll', 'coreclr.dll', 'System.Private.CoreLib.dll')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $publish $name) -PathType Leaf)) { throw "Publish output is missing $name." }
+          }
+          $runtime = Get-Content -LiteralPath (Join-Path $publish 'wingood.runtimeconfig.json') -Raw | ConvertFrom-Json
+          if (-not ($runtime.runtimeOptions.includedFrameworks | Where-Object { $_.name -eq 'Microsoft.NETCore.App' })) { throw 'Publish is not self-contained.' }
+          $tag = if ($env:GITHUB_REF.StartsWith('refs/tags/')) { $env:GITHUB_REF.Substring('refs/tags/'.Length) } else { 'ci' }
+          if ($tag -ne 'ci' -and $tag -notmatch '^v[0-9A-Za-z][0-9A-Za-z.+-]*$') { throw "Unsupported release version tag: $tag" }
+          $archiveName = "wingood-$tag-win-x64.zip"
+          $archive = Join-Path $release $archiveName
+          Compress-Archive -Path (Join-Path $publish '*') -DestinationPath $archive -CompressionLevel Optimal
+          $digest = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -LiteralPath ($archive + '.sha256') -Value "$digest  $archiveName" -Encoding ASCII
+          "WINGOOD_RELEASE_DIR=$release" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Test local archive installer
+        shell: pwsh
+        run: |
+          $archives = @(Get-ChildItem -LiteralPath $env:WINGOOD_RELEASE_DIR -Filter '*.zip')
+          if ($archives.Count -ne 1) { throw 'Expected exactly one release ZIP.' }
+          $archive = $archives[0]
+          & ./scripts/test-distribution.ps1 -ArchivePath $archive.FullName -ChecksumPath ($archive.FullName + '.sha256')
+          if ($LASTEXITCODE -ne 0) { throw 'PowerShell 7 installer checks failed.' }
+          & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ./scripts/test-distribution.ps1 -ArchivePath $archive.FullName -ChecksumPath ($archive.FullName + '.sha256')
+          if ($LASTEXITCODE -ne 0) { throw 'Windows PowerShell 5.1 installer checks failed.' }
+      - uses: actions/upload-artifact@v4
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          name: wingood-release-assets
+          path: ${{ runner.temp }}/wingood-release/*
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: checks
+    runs-on: windows-2025
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wingood-release-assets
+          path: release
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/wingood-*-win-x64.zip
+            release/wingood-*-win-x64.zip.sha256
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}

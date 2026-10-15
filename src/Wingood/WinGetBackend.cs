@@ -8,11 +8,12 @@ internal sealed class WinGetBackend(bool acceptAgreements) : IUpgradeBackend
 {
     private readonly PackageManager manager = new();
     private readonly Dictionary<string, (CatalogPackage Package, PackageVersionId Version)> handles = [];
+    public List<string> SourceErrors { get; } = [];
+    public Dictionary<string, string> Unavailable { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-    public async Task<IReadOnlyList<PackageCandidate>> DiscoverAsync(string sourceName, string? scope, IReadOnlyList<string> ids, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<PackageCandidate>> DiscoverAsync(IReadOnlyList<string> sourceNames, string? scope, IReadOnlyList<string> queries, CancellationToken cancellationToken, bool acceptSourceAgreements = false)
     {
-        var source = manager.GetPackageCatalogByName(sourceName)
-            ?? throw new ArgumentException($"Source '{sourceName}' is not registered with WinGet.");
+        handles.Clear();
         var options = new CreateCompositePackageCatalogOptions
         {
             CompositeSearchBehavior = CompositeSearchBehavior.LocalCatalogs,
@@ -23,27 +24,51 @@ internal sealed class WinGetBackend(bool acceptAgreements) : IUpgradeBackend
                 _ => PackageInstallScope.Any,
             },
         };
-        options.Catalogs.Add(source);
+        foreach (var sourceName in sourceNames)
+        {
+            try
+            {
+                var source = manager.GetPackageCatalogByName(sourceName)
+                    ?? throw new InvalidOperationException($"Source '{sourceName}' is not registered with WinGet.");
+                source.AcceptSourceAgreements = acceptSourceAgreements;
+                var opened = await source.ConnectAsync().AsTask(cancellationToken);
+                if (opened.Status != ConnectResultStatus.Ok) throw new InvalidOperationException($"Connection returned {opened.Status}.");
+                options.Catalogs.Add(source);
+            }
+            catch (Exception error) when (error is not OperationCanceledException)
+            {
+                SourceErrors.Add($"{sourceName}: {error.Message}");
+            }
+        }
+        if (options.Catalogs.Count == 0) return [];
         var connection = await manager.CreateCompositePackageCatalog(options).ConnectAsync().AsTask(cancellationToken);
         if (connection.Status != ConnectResultStatus.Ok)
             throw new InvalidOperationException($"Catalog connection failed: {connection.Status}. Check 'winget source list' and source agreements with WinGet.");
 
         var found = await connection.PackageCatalog.FindPackagesAsync(new FindPackagesOptions()).AsTask(cancellationToken);
-        if (found.Status != FindPackagesResultStatus.Ok)
+        if (found.Status != FindPackagesResultStatus.Ok || found.WasLimitExceeded)
             throw new InvalidOperationException($"Package search failed: {found.Status}.");
 
-        var requested = ids.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var candidates = new List<PackageCandidate>();
         for (var i = 0; i < found.Matches.Count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var package = found.Matches[i].CatalogPackage;
             // Applicability can fetch manifests; only evaluate the requested IDs.
-            if (requested.Count > 0 && !requested.Contains(package.Id)) continue;
+            if (queries.Count > 0 && !queries.Any(query => package.Id.Contains(query, StringComparison.OrdinalIgnoreCase)
+                || package.Name.Contains(query, StringComparison.OrdinalIgnoreCase))) continue;
             var installed = package.InstalledVersion;
             if (installed is null || string.IsNullOrWhiteSpace(installed.Version)
-                || installed.Version.Equals("Unknown", StringComparison.OrdinalIgnoreCase) || !package.IsUpdateAvailable)
+                || installed.Version.Equals("Unknown", StringComparison.OrdinalIgnoreCase))
+            {
+                Unavailable[package.Id] = "The installed version could not be confirmed.";
                 continue;
+            }
+            if (!package.IsUpdateAvailable)
+            {
+                Unavailable[package.Id] = "WinGet's API reports no applicable update.";
+                continue;
+            }
 
             // DefaultInstallVersion can fall back to an inapplicable version when no
             // update exists. Only inspect it after IsUpdateAvailable succeeds.
@@ -66,13 +91,14 @@ internal sealed class WinGetBackend(bool acceptAgreements) : IUpgradeBackend
 
             var installedScope = installed.GetMetadata(PackageVersionMetadataField.InstalledScope).ToLowerInvariant();
             if (installedScope == "system") installedScope = "machine";
+            var sourceName = target.PackageCatalog.Info.Name;
             var candidate = new PackageCandidate($"{sourceName}:{i}", package.Id, package.Name,
                 installed.Version, target.Version, installedScope,
-                installed.GetMetadata(PackageVersionMetadataField.InstallerType));
+                installed.GetMetadata(PackageVersionMetadataField.InstallerType), sourceName);
             handles.Add(candidate.Key, (package, versionId));
             candidates.Add(candidate);
         }
-        return candidates.OrderBy(p => p.Id, StringComparer.OrdinalIgnoreCase).ToArray();
+        return candidates;
     }
 
     public async Task<UpgradeResult> UpgradeAsync(PackageCandidate package, IProgress<UpgradeProgress> progress, CancellationToken cancellationToken)

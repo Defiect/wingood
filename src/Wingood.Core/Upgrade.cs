@@ -2,7 +2,8 @@ namespace Wingood.Core;
 
 public sealed record PackageCandidate(
     string Key, string Id, string Name, string InstalledVersion,
-    string AvailableVersion, string InstalledScope, string InstalledType);
+    string AvailableVersion, string InstalledScope, string InstalledType,
+    string Source = "winget");
 
 public sealed record UpgradeProgress(
     string State, ulong BytesDownloaded = 0, ulong BytesRequired = 0,
@@ -29,20 +30,113 @@ public static class PackageSelection
         IReadOnlyList<PackageCandidate> candidates, IReadOnlyList<string> ids, string? scope = null)
     {
         if (ids.Count == 0)
-            throw new ArgumentException("Specify one or more exact package IDs. Run 'list' to see candidates.");
+            throw new ArgumentException("Specify one or more package IDs or names. Run 'upgrade' to see available updates.", nameof(ids));
 
         var selected = new List<PackageCandidate>();
-        foreach (var id in ids.Distinct(StringComparer.OrdinalIgnoreCase))
+        var selectedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var query in ids)
         {
-            var matches = candidates.Where(p => p.Id.Equals(id, StringComparison.OrdinalIgnoreCase)
-                && (scope is null || p.InstalledScope.Equals(scope, StringComparison.OrdinalIgnoreCase))).ToArray();
+            if (string.IsNullOrWhiteSpace(query))
+                throw new ArgumentException("Package IDs and names cannot be empty.", nameof(ids));
+
+            var inScope = candidates.Where(candidate =>
+                scope is null || candidate.InstalledScope.Equals(scope, StringComparison.OrdinalIgnoreCase));
+            var eligible = inScope.ToArray();
+
+            // Exact package IDs take precedence over names, then partial matches.
+            var matches = eligible.Where(candidate =>
+                candidate.Id.Equals(query, StringComparison.OrdinalIgnoreCase)).ToArray();
             if (matches.Length == 0)
-                throw new ArgumentException($"No eligible upgrade found for '{id}'. It may be current, pinned, have an unknown version, or not match the selected scope/source.");
+            {
+                matches = eligible.Where(candidate =>
+                    candidate.Name.Equals(query, StringComparison.OrdinalIgnoreCase)).ToArray();
+            }
+            if (matches.Length == 0)
+            {
+                matches = eligible.Where(candidate =>
+                    candidate.Id.Contains(query, StringComparison.OrdinalIgnoreCase)
+                    || candidate.Name.Contains(query, StringComparison.OrdinalIgnoreCase)).ToArray();
+            }
+
+            if (matches.Length == 0)
+                throw new ArgumentException($"No eligible upgrade matches '{query}'. It may be current, pinned, have an unknown version, or not match the selected scope/source.", nameof(ids));
             if (matches.Length > 1)
-                throw new ArgumentException($"'{id}' matches multiple installed copies. Use --scope user or --scope machine to narrow the selection; unresolved duplicates are not upgraded.");
-            selected.Add(matches[0]);
+                throw new ArgumentException(FormatAmbiguous(query, matches, scope), nameof(ids));
+
+            if (selectedKeys.Add(matches[0].Key))
+                selected.Add(matches[0]);
         }
         return selected;
+    }
+
+    /// <summary>
+    /// Binds WinGet's eligible upgrade rows to installed package candidates.
+    /// Every identity and version component must agree exactly or the batch is
+    /// rejected rather than risking an update to a different catalog entry.
+    /// </summary>
+    public static IReadOnlyList<PackageCandidate> BindBulk(
+        IReadOnlyList<PackageCandidate> candidates, IReadOnlyList<NativeUpgrade> entries)
+    {
+        var bound = new List<PackageCandidate>(entries.Count);
+        var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var entry in entries)
+        {
+            if (string.IsNullOrWhiteSpace(entry.Id))
+                throw new InvalidOperationException("WinGet returned an eligible upgrade with an empty package ID.");
+
+            var matches = candidates.Where(candidate =>
+                candidate.Id.Equals(entry.Id, StringComparison.Ordinal)
+                && candidate.Source.Equals(entry.Source, StringComparison.Ordinal)
+                && candidate.InstalledVersion.Equals(entry.InstalledVersion, StringComparison.Ordinal)
+                && candidate.AvailableVersion.Equals(entry.AvailableVersion, StringComparison.Ordinal)).ToArray();
+
+            if (matches.Length == 0)
+                throw new InvalidOperationException(
+                    $"Could not bind WinGet's eligible row '{entry.Id}' from source '{entry.Source}' " +
+                    $"({entry.InstalledVersion} -> {entry.AvailableVersion}) to one installed package candidate.");
+            if (matches.Length > 1)
+                throw new InvalidOperationException(
+                    $"WinGet's eligible row '{entry.Id}' from source '{entry.Source}' " +
+                    "matches multiple installed package candidates with the same versions.");
+            if (!keys.Add(matches[0].Key))
+                throw new InvalidOperationException(
+                    $"WinGet returned duplicate eligible rows for '{entry.Id}' from source '{entry.Source}'.");
+
+            bound.Add(matches[0]);
+        }
+
+        return bound;
+    }
+
+    /// <summary>Validates exclusions against all eligible candidates, then removes them from a selection.</summary>
+    public static IReadOnlyList<PackageCandidate> Exclude(
+        IReadOnlyList<PackageCandidate> selected,
+        IReadOnlyList<PackageCandidate> allCandidates,
+        IReadOnlyList<string> queries,
+        string? scope = null)
+    {
+        if (queries.Count == 0)
+            return selected;
+
+        // Resolve the full exclusion list first so an invalid later query never
+        // produces a partially filtered batch.
+        var excluded = Select(allCandidates, queries, scope)
+            .Select(candidate => candidate.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return selected.Where(candidate => !excluded.Contains(candidate.Key)).ToArray();
+    }
+
+    private static string FormatAmbiguous(
+        string query, IReadOnlyList<PackageCandidate> matches, string? scope)
+    {
+        var details = string.Join("; ", matches.Select(candidate =>
+            $"{candidate.Name} ({candidate.Id}, {candidate.Source}, {candidate.InstalledScope}, " +
+            $"{candidate.InstalledVersion} -> {candidate.AvailableVersion})"));
+        var scopeHint = scope is null
+            ? " Use --scope user or --scope machine where that distinguishes installed copies."
+            : string.Empty;
+        return $"'{query}' is ambiguous: {details}.{scopeHint}";
     }
 }
 

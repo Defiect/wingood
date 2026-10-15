@@ -40,12 +40,6 @@ internal sealed class RunRecorder : IDisposable
             if (hasPrevious && previous.State == progress.State && time - previous.Time < .2
                 && !(downloadComplete && !previous.Complete)) return;
             Append(new RunEvent(DateTimeOffset.UtcNow, time, "progress", package.Key, package.Id, progress));
-            if (!hasPrevious || previous.State != progress.State || previous.Bucket != bucket)
-            {
-                var detail = progress.State == "Downloading" && progress.BytesRequired > 0
-                    ? $" {progress.BytesDownloaded / 1048576d:F1}/{progress.BytesRequired / 1048576d:F1} MiB" : "";
-                WriteConsole($"[{time,7:F1}s] {package.Id}: {progress.State}{detail}");
-            }
             lastProgress[package.Key] = (progress.State, bucket, time, downloadComplete);
         }
     }
@@ -57,11 +51,6 @@ internal sealed class RunRecorder : IDisposable
             completed.Add(outcome.Package.Key);
             var time = clock.Elapsed.TotalSeconds;
             Append(new RunEvent(DateTimeOffset.UtcNow, time, "completed", outcome.Package.Key, outcome.Package.Id, Result: outcome.Result));
-            var code = outcome.Result.ErrorCode is null ? "" : $" ({outcome.Result.ErrorCode})";
-            WriteConsole($"[{time,7:F1}s] {outcome.Package.Id}: {outcome.Result.Status}{code}");
-            if (!outcome.Result.Succeeded && !string.IsNullOrWhiteSpace(outcome.Result.Message)
-                && outcome.Result.Message != outcome.Result.ErrorCode)
-                WriteConsole($"  {outcome.Result.Message}");
         }
     }
 
@@ -81,12 +70,17 @@ internal sealed class RunRecorder : IDisposable
                 measurement = "Timestamped WinGet API states. Installing includes preparation/waiting, not just vendor execution. Repeated progress coalesced to at most 5 samples per second per package; state transitions always retained.",
             });
             if (loggingError is not null) SaveJson("recovered-events.json", events);
-            File.WriteAllText(Path.Combine(DirectoryPath, "timeline.svg"), Telemetry.CreateSvg(metrics, outcomes));
             return metrics;
         }
     }
 
-    public void SaveJson(string name, object value) => File.WriteAllText(Path.Combine(DirectoryPath, name), JsonSerializer.Serialize(value, JsonOptions));
+    public void SaveJson(string name, object value)
+    {
+        var destination = Path.Combine(DirectoryPath, name);
+        var temporary = destination + ".tmp";
+        File.WriteAllText(temporary, JsonSerializer.Serialize(value, JsonOptions));
+        File.Move(temporary, destination, overwrite: true);
+    }
 
     private void Append(RunEvent entry)
     {
