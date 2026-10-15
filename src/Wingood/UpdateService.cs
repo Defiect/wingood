@@ -53,12 +53,18 @@ internal sealed class UpdateService(Terminal terminal, IUpdateCatalog? catalog =
         return new(backend, candidates, entries, warnings, backend.RunId, backend.Unavailable);
     }
 
-    private static IReadOnlyList<PackageCandidate> Bind(UpdateDiscovery discovery, List<string> warnings)
+    private IReadOnlyList<PackageCandidate> Bind(UpdateDiscovery discovery, List<string> warnings)
     {
         var selected = new List<PackageCandidate>();
         var keys = new HashSet<string>(StringComparer.Ordinal);
         foreach (var entry in discovery.Entries)
         {
+            if (discovery.Unavailable?.GetValueOrDefault(entry.Id) == WinGetBackend.NoApplicableUpdate
+                && !discovery.Candidates.Any(package => package.Id == entry.Id && package.Source == entry.Source))
+            {
+                terminal.Line($"[grey]Skipping {Terminal.Text(entry.Id)}: {Terminal.Text(WinGetBackend.NoApplicableUpdate)}[/]");
+                continue;
+            }
             try
             {
                 var package = PackageSelection.BindBulk(discovery.Candidates, [entry])[0];

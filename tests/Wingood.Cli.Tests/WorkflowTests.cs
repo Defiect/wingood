@@ -19,14 +19,15 @@ public sealed class WorkflowTests
     }
 
     private (UpdateService Service, FakeCatalog Catalog, StringWriter Output) Create(
-        IReadOnlyList<PackageCandidate>? packages = null, IReadOnlyList<NativeUpgrade>? entries = null, IReadOnlyList<string>? warnings = null)
+        IReadOnlyList<PackageCandidate>? packages = null, IReadOnlyList<NativeUpgrade>? entries = null, IReadOnlyList<string>? warnings = null,
+        IReadOnlyDictionary<string, string>? unavailable = null)
     {
         packages ??= [App];
         entries ??= packages.Select(package => new NativeUpgrade(package.Name, package.Id, package.InstalledVersion, package.AvailableVersion, package.Source)).ToArray();
         var output = new StringWriter();
         var console = AnsiConsole.Create(new AnsiConsoleSettings { Ansi = AnsiSupport.No, Interactive = InteractionSupport.No, Out = new AnsiConsoleOutput(output) });
         console.Profile.Width = 10000;
-        var catalog = new FakeCatalog(packages, entries, warnings ?? []);
+        var catalog = new FakeCatalog(packages, entries, warnings ?? [], unavailable);
         return (new UpdateService(new Terminal(console), catalog, new RunHistory(root)), catalog, output);
     }
 
@@ -85,6 +86,16 @@ public sealed class WorkflowTests
         Assert.AreEqual(1, await setup.Service.UpgradeAsync(new UpgradeSettings { Apps = [App.Id], Yes = true }, false, CancellationToken.None));
         Assert.HasCount(0, setup.Catalog.Backend.Submitted);
         StringAssert.Contains(setup.Output.ToString(), "msstore connection failed");
+    }
+
+    [TestMethod]
+    public async Task ConfirmedInapplicableVersionIsAnInformationalExclusion()
+    {
+        var setup = Create(entries: [new("Example", App.Id, "1", "2", "winget"), new("Other", "Other.App", "1", "2", "winget")],
+            unavailable: new Dictionary<string, string> { ["Other.App"] = WinGetBackend.NoApplicableUpdate });
+        Assert.AreEqual(0, await setup.Service.UpgradeAsync(new UpgradeSettings { Yes = true }, false, CancellationToken.None));
+        Assert.HasCount(1, setup.Catalog.Backend.Submitted);
+        StringAssert.Contains(setup.Output.ToString(), "Skipping Other.App");
     }
 
     [TestMethod]
@@ -149,7 +160,7 @@ public sealed class WorkflowTests
     }
 
     private sealed class FakeCatalog(IReadOnlyList<PackageCandidate> packages, IReadOnlyList<NativeUpgrade> entries,
-        IReadOnlyList<string> warnings) : IUpdateCatalog
+        IReadOnlyList<string> warnings, IReadOnlyDictionary<string, string>? unavailable) : IUpdateCatalog
     {
         public FakeBackend Backend { get; } = new();
         public IReadOnlyList<string> Queries { get; private set; } = [];
@@ -159,7 +170,7 @@ public sealed class WorkflowTests
         {
             Queries = queries;
             AcceptedSourceAgreements = acceptSourceAgreements;
-            return Task.FromResult(new UpdateDiscovery(Backend, packages, entries, warnings, Guid.NewGuid().ToString("N")));
+            return Task.FromResult(new UpdateDiscovery(Backend, packages, entries, warnings, Guid.NewGuid().ToString("N"), unavailable));
         }
     }
 }

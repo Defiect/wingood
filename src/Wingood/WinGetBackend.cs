@@ -6,6 +6,7 @@ namespace Wingood;
 
 internal sealed class WinGetBackend(bool acceptAgreements) : IUpgradeBackend
 {
+    public const string NoApplicableUpdate = "WinGet's API reports no applicable update.";
     private readonly PackageManager manager = new();
     private readonly Dictionary<string, (CatalogPackage Package, PackageVersionId Version)> handles = [];
     public List<string> SourceErrors { get; } = [];
@@ -66,7 +67,7 @@ internal sealed class WinGetBackend(bool acceptAgreements) : IUpgradeBackend
             }
             if (!package.IsUpdateAvailable)
             {
-                Unavailable[package.Id] = "WinGet's API reports no applicable update.";
+                Unavailable[package.Id] = NoApplicableUpdate;
                 continue;
             }
 
