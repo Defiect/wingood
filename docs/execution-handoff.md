@@ -1,35 +1,29 @@
 # Execution handoff
 
-Checkpoint dated October 14, 2026, after Sean approved the complete [wingood plan](wingood-plan.md) and requested context compaction. The plan is authoritative. Approval includes its routine defaults, public MIT repository, GitHub syncing, and tested release publication. Do not repeat the approval interview.
+Completed October 14, 2026. Sean approved the full [wingood plan](wingood-plan.md), authorized execution, and the implementation is now published and installed. No approval interview needs repeating.
 
-## Where to resume
+## Current state
 
-Migration and implementation have not started. Current repository: `D:\Programming\winget-unshittified`. Destination: `D:\Programming\wingood`. Recheck the destination before copying or moving anything. It was empty when last checked. Preserve ignored `artifacts/`, which contains research, logs, test evidence, and a working published prototype.
+- Repository: `D:\Programming\wingood`, public MIT [Defiect/wingood](https://github.com/Defiect/wingood), synced on `main`.
+- Release: [v0.1.0](https://github.com/Defiect/wingood/releases/tag/v0.1.0), tagged code commit `c56005177af52f181f38a63f7085e4bf6c544eb9`.
+- Installed: `%LOCALAPPDATA%\Programs\wingood`, both `wingood.exe` and `wg.exe`, user PATH entry present once.
+- Prebuilt self-contained Windows x64 ZIP and checksum come from GitHub Actions. Public installation and repeat installation work in PowerShell 7 and Windows PowerShell 5.1.
+- The original prototype artifacts, raw logs, source investigations, and known-good executable remain under the ignored `artifacts/` tree. An empty hidden `.git` directory remains in the old `D:\Programming\winget-unshittified` folder after cleanup was blocked; it is not the working repository.
 
-Start with step 0 of the plan: migrate, rebrand, validate the renamed build, create public `Defiect/wingood` through `gh`, and commit/push. Git was initialized without commits or a remote when last checked. Verify current state before acting.
+## Behavior
 
-The requested checkpoint only updated planning documents. It did not rerun tests, update apps, migrate files, or create a GitHub repository.
+Bare `wingood` previews updates and prompts `[Y/n]`; bare `wg` proceeds automatically. Named commands through either entry point behave the same. `upgrade`, `update`, `up`, `show`, and `retry` are implemented, with `--all`, `--yes`/`-y`, `--dry-run`, exclusions, source/scope filters, and an optional outstanding-operation cap. The default submits the whole selected batch. Spectre.Console/Cli handle terminal output and parsing. No browser reports are generated.
 
-## Decisions to retain
+Recent run records are under `%LOCALAPPDATA%\wingood\runs`, with 30 retained. Retry refreshes only saved failures, preserves source/scope, and recovers from durable events if the final summary is missing or truncated. EOF never counts as yes. Read-only commands do not accept new source agreements; proceeding can accept them and recheck failed sources.
 
-- Use Spectre.Console and Spectre.Console.Cli. Prioritize clear, colorful terminal output and readable redirected output. No browser reports in the product.
-- Bare `wingood` lists updates and prompts `[Y/n]`. Bare `wg` updates automatically. Named commands through `wg` behave like `wingood`. EOF never counts as yes.
-- Include ordinary WinGet and supported Store updates. Preserve pins and explicit-only exclusions. Submit the whole selected batch immediately by default.
-- Execute through COM. Use the CLI's read-only listing for missing bulk-eligibility information and reformat `winget show` for package details.
-- Match combined-source discovery to the exact selected source/version. Docker appeared under both catalogs in separate queries, so merging independent lists can submit duplicates.
-- The main eligibility table can be empty while the explicit-only table is present. Unknown or truncated output must not authorize guessed updates.
-- Keep the main process unelevated. The prototype's elevated Doppler update failed and an unelevated retry succeeded.
-- Preserve the publish step that copies the correct native `Microsoft.Management.Deployment.dll`. The stable and preview SDKs used different transports against this PC's preview engine.
-- Do not use `--output-locale` without rechecking support. The inspected newer source had it, but the installed engine did not.
-- Ship an untrimmed, self-contained Windows x64 release ZIP, both entry points, and a PowerShell 5.1-compatible installer. WinGet/App Installer remains a prerequisite.
-- Keep local run records for retry, with the approved default of 30 runs. Retry only previously failed apps that still have an eligible update.
+## Evidence and limits
 
-## Evidence and verification
+[Implementation validation](wingood-validation.md) records 42 passing tests, successful source/release Windows workflows, both PowerShell installer tests, checksum/locked-file preservation, public installation/reinstallation, unchanged PATH on reinstall, app-local runtime tracing, and read-only WinGet activation from the installed release.
 
-The prototype has nine successful real app updates and 15 previously passing tests. See [validation](validation.md), [live-test notes](live-test-notes.md), [bulk-selection research](bulk-update-research.md), and [Store research](wingood-store-research.md). These are historical results, not fresh checks of the eventual rebrand.
+The combined dry run selected 40 updates. The installed winget-only dry run selected 41; native combined correlation chooses one source per installed app. Five other ordinary native rows are not applicable because of installer type/scope changes. These are informational exclusions, not failed updates. MSYS2's explicit-targeting row is excluded from bulk execution.
 
-WinGet's `Downloading` phase can include waiting after bytes finish. Preserve that distinction in progress and measurements. Do not claim a controlled speedup from different batches of apps.
+No additional real app upgrades were performed during this implementation. The original nine successful updates remain historical evidence for the reused execution path. Store discovery is supported and checked, but Store execution and alternate engine versions are not newly live-tested.
 
-Immediate live acceptance checks are read-only discovery, `show`, and dry runs. Do not run a blanket real upgrade as a routine verification command.
+Installed engine: WinGet `1.30.110-preview`, App Installer `1.30.109.0`; COM SDK `1.30.100-preview`; .NET SDK `10.0.401`. Preserve the publish target that copies the correct native activation DLL. Keep the main process unelevated, retain exact source/version binding, and never turn unknown CLI layouts into guessed updates. API download/install states can include waiting/preparation; do not claim a controlled speedup from different app batches.
 
-Sean requested gpt-6-luna for delegated research and grunt work. Use plain language in updates and reports. Use `gh` for GitHub and assume it is authenticated.
+Sean prefers plain language and gpt-6-luna for delegated research/grunt work. Use `gh` for GitHub. The next work should follow his feedback on using the released tool, rather than restarting migration or implementation.

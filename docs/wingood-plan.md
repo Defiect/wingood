@@ -1,6 +1,6 @@
 # wingood CLI plan
 
-Status: approved by Sean on October 14, 2026, including the routine implementation defaults below. Migration, implementation, and publication have not begun.
+Status: approved by Sean and implemented on October 14, 2026. The repository moved to `D:\Programming\wingood`, public GitHub syncing is established, and `v0.1.0` is published. See [implementation validation](wingood-validation.md) for the checks and remaining live-test limits.
 
 ## Confirmed requirements
 
@@ -81,7 +81,7 @@ Confirmed delivery: a single command in PowerShell downloads and runs a public i
 irm https://raw.githubusercontent.com/Defiect/wingood/main/install.ps1 | iex
 ```
 
-The URL is a plan, not a published installer yet.
+The installer and its first prebuilt release are published. The canonical command works in PowerShell 7 and Windows PowerShell 5.1.
 
 Proposed release defaults:
 
@@ -122,13 +122,13 @@ The ignored `artifacts/` tree contains about 30.5 MB, including the original bas
 - Verify both release entry points from an installed prebuilt archive; the runtime must be bundled and native activation files must match the published build. Verify installer repeatability and failure preservation.
 - Review the public file set, run the required build/test/format checks, and ensure GitHub checks pass before tagging the first release.
 
-Sean approved this complete plan on October 14, 2026: "Skimmed the plan, it looks fine to me." No further approval or interview round is required. Execution starts with step 0 above after the requested context-compaction checkpoint.
+Sean approved this complete plan on October 14, 2026: "Skimmed the plan, it looks fine to me." The execution sequence above is complete through `v0.1.0`; no additional planning approval was required.
 
 ## Current technical evidence
 
 The existing C# prototype completed nine real app updates across two batches and a retry. It has 15 passing tests recorded in [validation](validation.md). The first version accepts exact IDs, submits at most four whole updates at once, and lets the installed WinGet engine run up to three download workers and one installation worker. These are existing implementation facts, not decisions about the final CLI interface.
 
-The proposed bulk-selection approach is to read the main table from a read-only `winget upgrade` invocation, match its IDs to the programming interface's eligible candidates, and use the existing concurrent updater. WinGet prints apps requiring explicit selection in a separate table. A parser must distinguish these tables and handle unknown output without guessing. See [bulk update research](bulk-update-research.md). Implementation has not begun.
+The implemented bulk-selection approach reads the main table from a read-only `winget upgrade` invocation, matches exact IDs/sources/installed and available versions to applicable API candidates, and uses the concurrent updater. The parser excludes the separate explicit-targeting table and rejects unknown layouts. Confirmed API applicability exclusions are informational skips. See [bulk update research](bulk-update-research.md) and [implementation validation](wingood-validation.md).
 
 Store discovery was verified read-only on this PC: `winget upgrade --source msstore --disable-interactivity` found Docker Desktop 4.84.0 to 4.94.0. Separate winget-only discovery also finds that installed app. A combined native query lists it once, using the Store entry. Use the combined catalog's installed-app correlation and bind the selected source/version; do not concatenate two independent update lists and submit both entries. WinGet can only discover Store updates for which its catalog provides enough version information, so coverage does not equal the Microsoft Store app's complete update scan. See [Store research](wingood-store-research.md).
 
