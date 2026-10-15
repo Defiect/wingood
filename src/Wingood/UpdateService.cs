@@ -43,6 +43,8 @@ internal sealed class UpdateService(Terminal terminal, IUpdateCatalog? catalog =
                 sources = healthy;
             }
         }
+        if (needsBulkEligibility && queries.Count == 0)
+            sources = sources.Where(candidateSource => entries.Any(entry => entry.Source.Equals(candidateSource, StringComparison.OrdinalIgnoreCase))).ToArray();
         var backend = new WinGetBackend(acceptAgreements: true);
         var search = needsBulkEligibility ? entries.Select(entry => entry.Id).Concat(queries).ToArray() : queries;
         var candidates = sources.Count == 0 || needsBulkEligibility && search.Count == 0
